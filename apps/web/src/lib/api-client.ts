@@ -108,10 +108,10 @@ export async function apiClient<T = unknown>(
   const url = endpoint.startsWith("http") ? endpoint : `${API_BASE_URL}${endpoint}`;
   const token = getStoredToken();
 
-  const defaultHeaders: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-  };
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+  const defaultHeaders: Record<string, string> = { Accept: "application/json" };
+  // Let the browser set the multipart boundary for uploads.
+  if (!isFormData) defaultHeaders["Content-Type"] = "application/json";
 
   if (token) {
     defaultHeaders["Authorization"] = `Bearer ${token}`;
@@ -230,4 +230,37 @@ export async function apiClient<T = unknown>(
   }
 
   return response.json();
+}
+
+
+/** Authenticated binary download helper for API endpoints that return files instead of JSON. */
+export async function apiClientBlob(endpoint: string): Promise<Blob> {
+  const url = endpoint.startsWith("http") ? endpoint : `${API_BASE_URL}${endpoint}`;
+  let token = getStoredToken();
+  const send = (accessToken: string | null) => fetch(url, {
+    method: "GET",
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}`, Accept: "*/*" } : { Accept: "*/*" },
+  });
+
+  let response = await send(token);
+  if (response.status === 401) {
+    try {
+      token = await executeTokenRefresh();
+      response = await send(token);
+    } catch {
+      clearStoredTokens();
+      if (typeof window !== "undefined") window.location.href = "/login?reason=expired";
+      throw new Error("Session expired. Please log in again.");
+    }
+  }
+  if (!response.ok) {
+    let message = `Download failed (HTTP ${response.status}).`;
+    try {
+      const body = await response.clone().json();
+      if (typeof body.message === "string") message = body.message;
+      else if (typeof body.detail === "string") message = body.detail;
+    } catch { /* response may not be JSON */ }
+    throw new ApiError(message, response.status);
+  }
+  return response.blob();
 }

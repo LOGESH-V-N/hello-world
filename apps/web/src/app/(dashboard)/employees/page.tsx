@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   BriefcaseBusiness, Building2, CalendarDays, Check, ChevronLeft, ChevronRight,
-  CircleAlert, Download, LoaderCircle, Mail, Pencil, Plus, Search, Trash2, Users, X,
+  CircleAlert, Download, FileText, LoaderCircle, Mail, Pencil, Plus, Search, Trash2, Upload, Users, X,
 } from "lucide-react";
 import { apiClient, ApiError } from "@/lib/api-client";
 
@@ -15,6 +15,10 @@ type Employee = {
   documents: { id: number; documentType: number; fileName: string; contentType: string; sizeBytes: number; uploadedAt: string }[];
 };
 type EmployeePage = { items: Employee[]; page: number; pageSize: number; totalCount: number; totalPages: number };
+type EmployeeDocument = { id: number; documentType: number; fileName: string; contentType: string; sizeBytes: number; uploadedAt: string };
+const DOCUMENT_TYPES = [{ value: 1, label: "Aadhaar" }, { value: 2, label: "PAN" }, { value: 3, label: "Other" }];
+function documentTypeName(value: number) { return DOCUMENT_TYPES.find((item) => item.value === value)?.label ?? "Other"; }
+function formatFileSize(bytes: number) { return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`; }
 type EmployeeForm = { firstName: string; lastName: string; email: string; mobile: string; department: string; designation: string; salary: string; dateOfJoining: string };
 const EMPTY_FORM: EmployeeForm = { firstName: "", lastName: "", email: "", mobile: "", department: "Engineering", designation: "", salary: "", dateOfJoining: new Date().toISOString().slice(0, 10) };
 const DEPARTMENTS = ["Engineering", "Human Resources", "Finance", "Operations", "Sales", "Marketing", "Design", "Customer Support"];
@@ -36,6 +40,14 @@ export default function EmployeesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Employee | null>(null);
   const [form, setForm] = useState<EmployeeForm>(EMPTY_FORM);
+  const [documentsEmployee, setDocumentsEmployee] = useState<Employee | null>(null);
+  const [documents, setDocuments] = useState<EmployeeDocument[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [documentSaving, setDocumentSaving] = useState(false);
+  const [documentType, setDocumentType] = useState("1");
+  const [documentFile, setDocumentFile] = useState<File | null>(null);
+  const [documentError, setDocumentError] = useState("");
+  const [documentNotice, setDocumentNotice] = useState("");
 
   const loadEmployees = useCallback(async () => {
     setLoading(true); setError("");
@@ -91,6 +103,77 @@ export default function EmployeesPage() {
     } catch (err) { setError(err instanceof Error ? err.message : "Could not deactivate employee."); }
   }
 
+  async function loadDocuments(employeeId: number) {
+    setDocumentsLoading(true); setDocumentError("");
+    try {
+      const result = await apiClient<EmployeeDocument[]>(`/api/v1/employees/${employeeId}/documents`);
+      setDocuments(result);
+    } catch (err) {
+      setDocumentError(err instanceof Error ? err.message : "Could not load employee documents.");
+    } finally { setDocumentsLoading(false); }
+  }
+
+  function openDocuments(employee: Employee) {
+    setDocumentsEmployee(employee); setDocuments([]); setDocumentFile(null);
+    setDocumentType("1"); setDocumentError(""); setDocumentNotice("");
+    void loadDocuments(employee.id);
+  }
+
+  async function uploadDocument(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!documentsEmployee || !documentFile) { setDocumentError("Choose a file to upload."); return; }
+    const extension = documentFile.name.split(".").pop()?.toLowerCase();
+    if (!["pdf", "jpg", "jpeg", "png"].includes(extension || "")) {
+      setDocumentError("Only PDF, JPG and PNG files are allowed."); return;
+    }
+    if (documentFile.size === 0) { setDocumentError("The selected file is empty."); return; }
+    if (documentFile.size > 5 * 1024 * 1024) { setDocumentError("The file must be 5 MB or smaller."); return; }
+
+    setDocumentSaving(true); setDocumentError(""); setDocumentNotice("");
+    const body = new FormData();
+    body.append("documentType", documentType);
+    body.append("file", documentFile);
+    try {
+      await apiClient<EmployeeDocument>(`/api/v1/employees/${documentsEmployee.id}/documents`, { method: "POST", body });
+      setDocumentNotice(`${documentTypeName(Number(documentType))} document uploaded successfully.`);
+      setDocumentFile(null);
+      const input = document.getElementById("employee-document-file") as HTMLInputElement | null;
+      if (input) input.value = "";
+      await loadDocuments(documentsEmployee.id);
+      await loadEmployees();
+    } catch (err) {
+      setDocumentError(err instanceof Error ? err.message : "Could not upload document.");
+    } finally { setDocumentSaving(false); }
+  }
+
+  async function downloadDocument(documentItem: EmployeeDocument) {
+    if (!documentsEmployee) return;
+    setDocumentError(""); setDocumentNotice("");
+    try {
+      const blob = await apiClientBlob(`/api/v1/employees/${documentsEmployee.id}/documents/${documentItem.id}/download`);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url; link.download = documentItem.fileName; document.body.appendChild(link); link.click(); link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setDocumentError(err instanceof Error ? err.message : "Could not download document.");
+    }
+  }
+
+  async function deleteDocument(documentItem: EmployeeDocument) {
+    if (!documentsEmployee) return;
+    if (!window.confirm(`Delete ${documentItem.fileName}? This permanently removes the document.`)) return;
+    setDocumentSaving(true); setDocumentError(""); setDocumentNotice("");
+    try {
+      await apiClient(`/api/v1/employees/${documentsEmployee.id}/documents/${documentItem.id}`, { method: "DELETE" });
+      setDocumentNotice("Document deleted successfully.");
+      await loadDocuments(documentsEmployee.id);
+      await loadEmployees();
+    } catch (err) {
+      setDocumentError(err instanceof Error ? err.message : "Could not delete document.");
+    } finally { setDocumentSaving(false); }
+  }
+
   function exportCsv() {
     const rows = data?.items ?? [];
     const columns = ["Employee ID", "Name", "Email", "Mobile", "Department", "Designation", "Salary (INR)", "Joining date", "Status"];
@@ -138,13 +221,50 @@ export default function EmployeesPage() {
             <td className="px-4 py-4"><span className="inline-flex items-center gap-1.5 rounded-lg bg-muted px-2.5 py-1.5 text-xs font-medium"><Building2 className="size-3" />{e.department}</span></td>
             <td className="px-4 py-4">{e.designation}</td><td className="px-4 py-4 whitespace-nowrap"><span className="inline-flex items-center gap-1.5 text-muted-foreground"><CalendarDays className="size-3.5" />{formatDate(e.dateOfJoining)}</span></td>
             <td className="px-4 py-4 whitespace-nowrap font-medium">{formatCurrency(e.salary)}</td><td className="px-4 py-4"><span className={"inline-flex rounded-full px-2.5 py-1 text-xs font-semibold " + (e.isActive ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-muted text-muted-foreground")}>{e.isActive ? "Active" : "Inactive"}</span></td>
-            <td className="px-4 py-4"><div className="flex justify-end gap-1.5"><button type="button" title="Edit employee" aria-label={"Edit " + displayName(e)} onClick={() => openEdit(e)} className="rounded-lg p-2 text-muted-foreground transition hover:bg-primary/10 hover:text-primary"><Pencil className="size-4" /></button>{e.isActive && <button type="button" title="Deactivate employee" aria-label={"Deactivate " + displayName(e)} onClick={() => void deactivateEmployee(e)} className="rounded-lg p-2 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"><Trash2 className="size-4" /></button>}</div></td>
+            <td className="px-4 py-4"><div className="flex justify-end gap-1.5"><button type="button" title="Edit employee" aria-label={"Edit " + displayName(e)} onClick={() => openEdit(e)} className="rounded-lg p-2 text-muted-foreground transition hover:bg-primary/10 hover:text-primary"><Pencil className="size-4" /></button><button type="button" title="Manage documents" aria-label={"Manage documents for " + displayName(e)} onClick={() => openDocuments(e)} className="rounded-lg p-2 text-muted-foreground transition hover:bg-primary/10 hover:text-primary"><FileText className="size-4" /></button>{e.isActive && <button type="button" title="Deactivate employee" aria-label={"Deactivate " + displayName(e)} onClick={() => void deactivateEmployee(e)} className="rounded-lg p-2 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"><Trash2 className="size-4" /></button>}</div></td>
           </tr>)}</tbody></table></div>
         <div className="flex flex-col gap-3 border-t border-border/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-muted-foreground">Showing {data.totalCount === 0 ? 0 : (page - 1) * data.pageSize + 1}–{Math.min(page * data.pageSize, data.totalCount)} of {data.totalCount} employees</p><div className="flex items-center gap-2"><button type="button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium disabled:opacity-40"><ChevronLeft className="size-4" /> Previous</button><span className="min-w-20 text-center text-xs text-muted-foreground">Page {page} of {totalPages}</span><button type="button" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))} className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium disabled:opacity-40">Next <ChevronRight className="size-4" /></button></div></div>
       </>}
     </section>
 
     <div className="flex items-start gap-3 rounded-2xl border border-border/70 bg-muted/30 p-4 text-xs leading-5 text-muted-foreground"><BriefcaseBusiness className="mt-0.5 size-4 shrink-0 text-primary" /><p>Employee data is loaded from the authenticated API. Sensitive identity fields are masked by the server; this screen does not display full PAN or Aadhaar numbers. Deactivation retains the record for audit.</p></div>
+
+    {documentsEmployee && <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto bg-black/50 p-3 sm:p-6" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !documentSaving) setDocumentsEmployee(null); }}>
+      <section role="dialog" aria-modal="true" aria-labelledby="documents-dialog-title" className="my-auto max-h-[94vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-border bg-background shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-background/95 px-5 py-4 backdrop-blur">
+          <div><h2 id="documents-dialog-title" className="text-lg font-semibold">Employee documents</h2><p className="mt-1 text-xs text-muted-foreground">{displayName(documentsEmployee)} · {documentsEmployee.employeeCode}</p></div>
+          <button type="button" aria-label="Close documents" disabled={documentSaving} onClick={() => setDocumentsEmployee(null)} className="rounded-lg p-2 text-muted-foreground hover:bg-muted disabled:opacity-50"><X className="size-4" /></button>
+        </div>
+        <div className="space-y-5 p-5">
+          <div className="rounded-xl border border-border/70 bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">Upload PDF, JPG or PNG files up to 5 MB. The API validates file contents. There is one document per type; uploading the same type replaces the current file.</div>
+          {documentError && <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{documentError}</div>}
+          {documentNotice && <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{documentNotice}</div>}
+          <form onSubmit={uploadDocument} className="space-y-3 rounded-xl border border-border p-4">
+            <h3 className="font-semibold">Upload or replace a document</h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1.5 text-sm font-medium">Document type
+                <select value={documentType} onChange={(event) => setDocumentType(event.target.value)} disabled={documentSaving} className="h-10 w-full rounded-lg border border-input bg-background px-3 font-normal outline-none focus:border-primary">
+                  {DOCUMENT_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}{documents.some((doc) => doc.documentType === item.value) ? " (replace existing)" : ""}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1.5 text-sm font-medium">File
+                <input id="employee-document-file" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" required disabled={documentSaving} onChange={(event) => setDocumentFile(event.target.files?.[0] ?? null)} className="block h-10 w-full rounded-lg border border-input bg-background px-2 py-1.5 text-xs font-normal file:mr-2 file:rounded-md file:border-0 file:bg-muted file:px-2 file:py-1" />
+              </label>
+            </div>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-muted-foreground">Maximum file size: 5 MB</p><button type="submit" disabled={documentSaving || !documentFile} className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-60">{documentSaving ? <LoaderCircle className="size-4 animate-spin" /> : <Upload className="size-4" />}{documentSaving ? "Working…" : documents.some((doc) => doc.documentType === Number(documentType)) ? "Replace document" : "Upload document"}</button></div>
+          </form>
+          <div>
+            <div className="mb-3 flex items-center justify-between"><h3 className="font-semibold">Stored documents</h3><span className="text-xs text-muted-foreground">{documents.length} of 3 types</span></div>
+            {documentsLoading ? <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" /> Loading documents…</div>
+            : documents.length === 0 ? <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center"><FileText className="mx-auto size-7 text-muted-foreground" /><p className="mt-2 text-sm font-medium">No documents uploaded</p><p className="mt-1 text-xs text-muted-foreground">Upload an employee document using the form above.</p></div>
+            : <div className="space-y-2">{documents.map((item) => <div key={item.id} className="flex flex-col gap-3 rounded-xl border border-border/70 p-3 sm:flex-row sm:items-center">
+              <div className="flex min-w-0 flex-1 items-start gap-3"><div className="rounded-lg bg-primary/10 p-2 text-primary"><FileText className="size-4" /></div><div className="min-w-0"><div className="break-all text-sm font-medium">{item.fileName}</div><div className="mt-1 text-xs text-muted-foreground">{documentTypeName(item.documentType)} · {formatFileSize(item.sizeBytes)} · Uploaded {formatDate(item.uploadedAt)}</div></div></div>
+              <div className="flex shrink-0 gap-1"><button type="button" onClick={() => void downloadDocument(item)} disabled={documentSaving || documentsLoading} className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium hover:bg-muted disabled:opacity-50"><Download className="size-3.5" /> Download</button><button type="button" onClick={() => void deleteDocument(item)} disabled={documentSaving || documentsLoading} className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/30 px-3 py-2 text-xs font-medium text-destructive hover:bg-destructive/5 disabled:opacity-50"><Trash2 className="size-3.5" /> Delete</button></div>
+            </div>)}</div>}
+          </div>
+        </div>
+      </section>
+    </div>}
 
     {dialogOpen && <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-3 sm:p-6" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setDialogOpen(false); }}>
       <section role="dialog" aria-modal="true" aria-labelledby="employee-dialog-title" className="my-auto max-h-[94vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-border bg-background shadow-2xl">
