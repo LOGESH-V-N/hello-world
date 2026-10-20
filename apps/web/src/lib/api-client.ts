@@ -27,7 +27,9 @@ export class ApiError extends Error {
   }
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5207";
+// Use same-origin requests by default so Next.js rewrites proxy /api and /health
+// to the backend. Set NEXT_PUBLIC_API_URL only when intentionally bypassing that proxy.
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 let isRefreshing = false;
 let refreshSubscribers: ((token: string) => void)[] = [];
