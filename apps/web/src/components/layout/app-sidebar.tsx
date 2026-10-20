@@ -69,6 +69,11 @@ const navigationStructure: NavItem[] = [
     icon: LayoutDashboard,
   },
   {
+    title: "Employee Management",
+    url: "/employees",
+    icon: Users,
+  },
+  {
     title: "Couture Orders",
     icon: ShoppingBag,
     defaultOpen: true,

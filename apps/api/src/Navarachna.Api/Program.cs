@@ -35,8 +35,12 @@ else
 builder.Services.AddControllers();
 
 // 4. Database Context with Npgsql Resilience
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
-    ?? "Host=navarachana-db.postgres.database.azure.com;Port=5432;Database=navarachana_designer_studio;Username=Navarachna;Password=password@123";
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "Database connection is not configured. Set ConnectionStrings__DefaultConnection or use .NET user-secrets.");
+}
 
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
@@ -50,8 +54,12 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 });
 
 // 5. JWT Authentication with Single Session Verification
-var jwtKey = builder.Configuration["Jwt:Key"] 
-    ?? "Navarachna_Studio_Luxury_Atelier_Super_Secret_Key_2026_Minimum_32_Chars!";
+var jwtKey = builder.Configuration["Jwt:Key"];
+if (string.IsNullOrWhiteSpace(jwtKey) || Encoding.UTF8.GetByteCount(jwtKey) < 32)
+{
+    throw new InvalidOperationException(
+        "Configure Jwt:Key with a random secret of at least 32 bytes using user-secrets or environment variables.");
+}
 var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "NavarachnaApi";
 var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "NavarachnaClients";
 
@@ -178,7 +186,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("DefaultPolicy", policy =>
     {
-        policy.SetIsOriginAllowed(_ => true)
+        policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();

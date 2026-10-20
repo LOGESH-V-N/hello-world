@@ -87,8 +87,12 @@ public class EmployeeService(AppDbContext db)
         e.LastName = r.LastName?.Trim();
         e.Email = r.Email.Trim().ToLowerInvariant();
         e.Mobile = r.Mobile;
-        e.PanNumber = r.PanNumber;
-        if (!string.IsNullOrEmpty(r.AadhaarNumber)) e.AadhaarLast4 = r.AadhaarNumber[^4..];
+        // The API only returns masked identifiers. Preserve existing values when a client
+        // omits these fields rather than accidentally replacing them with null.
+        if (!string.IsNullOrWhiteSpace(r.PanNumber))
+            e.PanNumber = r.PanNumber.Trim().ToUpperInvariant();
+        if (!string.IsNullOrEmpty(r.AadhaarNumber))
+            e.AadhaarLast4 = r.AadhaarNumber[^4..];
         e.Department = r.Department;
         e.Designation = r.Designation;
         e.Salary = r.Salary;
