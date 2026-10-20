@@ -5,7 +5,7 @@ import {
   BriefcaseBusiness, Building2, CalendarDays, Check, ChevronLeft, ChevronRight,
   CircleAlert, Download, FileText, LoaderCircle, Mail, Pencil, Plus, Search, Trash2, Upload, Users, X,
 } from "lucide-react";
-import { apiClient, ApiError } from "@/lib/api-client";
+import { apiClient, apiClientBlob, ApiError } from "@/lib/api-client";
 
 type Employee = {
   id: number; employeeCode: string; firstName: string; lastName?: string | null;
